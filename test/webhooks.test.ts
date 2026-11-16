@@ -45,6 +45,18 @@ describe("POST /webhooks/order", () => {
     expect(res.json()).toEqual({ result: "updated" });
   });
 
+  it("дозаполняет оплаченную сумму у заказов, сохранённых до скидок", async () => {
+    const o = apiOrder({ amount: 1000, discountPercent: 10, amountPaid: 900 });
+    await postWebhook(ctx.app, o);
+    await ctx.db.query(`UPDATE orders SET amount_paid_kop = NULL WHERE id = $1`, [o.id]);
+
+    const older = await postWebhook(ctx.app, { ...o, updatedAt: "2026-02-09T00:00:00Z" });
+    expect(older.json()).toEqual({ result: "stale" });
+    expect((await postWebhook(ctx.app, o)).json()).toEqual({ result: "updated" });
+    const { rows } = await ctx.db.query(`SELECT amount_paid_kop FROM orders WHERE id = $1`, [o.id]);
+    expect(Number(rows[0].amount_paid_kop)).toBe(90000);
+  });
+
   it("невалидное тело — 400", async () => {
     const res = await postWebhook(ctx.app, { id: "x" });
     expect(res.statusCode).toBe(400);
