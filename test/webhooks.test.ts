@@ -24,6 +24,20 @@ describe("POST /webhooks/order", () => {
     expect(rows[0].status).toBe("refunded");
   });
 
+  it("параллельные события не откатывают заказ на старую версию", async () => {
+    // Несколько раундов: пока пул соединений холодный, запросы почти не пересекаются
+    for (let i = 0; i < 5; i++) {
+      const o = apiOrder({ status: "pending", updatedAt: "2026-02-10T12:00:00Z" });
+      const paid = { ...o, status: "paid", updatedAt: "2026-02-10T13:00:00Z" };
+      const refunded = { ...o, status: "refunded", updatedAt: "2026-02-10T14:00:00Z" };
+
+      const results = await Promise.all([refunded, o, paid, refunded, o, paid].map((v) => postWebhook(ctx.app, v)));
+      expect(results.filter((r) => r.json().result === "created")).toHaveLength(1);
+      const { rows } = await ctx.db.query(`SELECT status FROM orders WHERE id = $1`, [o.id]);
+      expect(rows[0].status).toBe("refunded");
+    }
+  });
+
   it("новое событие обновляет заказ", async () => {
     const o = apiOrder({ status: "pending" });
     await postWebhook(ctx.app, o);
